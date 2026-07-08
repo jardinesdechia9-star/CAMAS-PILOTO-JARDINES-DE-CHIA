@@ -1,0 +1,1117 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Camas Piloto</title>
+    <!-- Bootstrap CSS --><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- SheetJS (xlsx) for reading and parsing Excel files --><script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <!-- Chart.js for generating charts --><script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Date adapter for Chart.js (optional but good to have) --><script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+    <!-- Chart.js Annotation Plugin --><script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+    <style>
+        /* Custom and additional styles */
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f8f9fa;
+        }
+        /* Loading animation */
+        .loader {
+            border: 5px solid #e9ecef;
+            border-top: 5px solid #0d6efd;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        /* Style for the file upload area */
+        .file-upload-label {
+            transition: background-color 0.2s ease-in-out;
+        }
+        .file-upload-label:hover {
+            background-color: #e9ecef !important;
+        }
+        /* Custom border for the table */
+        .table-bordered,
+        .table-bordered th,
+        .table-bordered td {
+            border: 1px solid black;
+        }
+        .table-bordered {
+            border-width: 2px;
+        }
+        .block-card {
+            margin-bottom: 1.5rem;
+        }
+        .nav-tabs .nav-link {
+            cursor: pointer;
+        }
+        /* Style for the footer signature */
+        .footer-signature {
+            font-size: 0.8rem;
+            color: #6c757d;
+            margin-top: 3rem;
+            text-align: right;
+            padding-right: 15px; /* Adjust as needed */
+            padding-bottom: 10px; /* Adjust as needed */
+        }
+        .chart-container {
+            position: relative;
+            height: 400px;
+            width: 100%;
+        }
+    </style>
+</head>
+<body class="bg-light">
+    <div class="container-fluid my-4 my-md-5">
+        <header class="text-center mb-5">
+            <h1 class="fw-bold text-body mb-2">Camas Piloto</h1>
+            <p class="fs-5 text-muted">Sube un archivo o selecciona un mes para ver los datos y gráficos de cada hoja.</p>
+            
+            <div class="d-flex justify-content-center align-items-center mt-4 gap-2 flex-wrap">
+                <label for="month-select" class="fw-semibold">Ver datos del mes:</label>
+                <select id="month-select" class="form-select w-auto shadow-sm">
+                    <!-- Opciones de meses llenadas mediante JS -->
+                </select>
+                <button id="load-month-btn" class="btn btn-primary shadow-sm">Cargar Mes</button>
+            </div>
+        </header>
+
+        <main>
+            <!-- Container to display file info --><div id="file-info" class="d-none text-center mb-4">
+                <p class="mb-2 fs-5"><strong>Mes Cargado:</strong> <span id="file-name" class="text-primary fw-bold"></span></p>
+            </div>
+
+            <div id="loading" class="d-none loader mx-auto"></div>
+            
+            <!-- Main navigation tabs --><ul class="nav nav-tabs mb-3" id="main-tabs">
+                <li class="nav-item">
+                    <a class="nav-link active" id="valves-tab" data-bs-toggle="tab" data-bs-target="#valves-view">Vista por Válvula</a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link" id="report-tab" data-bs-toggle="tab" data-bs-target="#report-view">Reporte Semanal</a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link" id="graphs-tab" data-bs-toggle="tab" data-bs-target="#graphs-view">Gráficas</a>
+                </li>
+            </ul>
+
+            <!-- Tab content --><div class="tab-content">
+                <!-- View by Valve --><div class="tab-pane fade show active" id="valves-view">
+                    <div id="blocks-container" class="mb-4"></div>
+                    <div id="sheet-content-container"></div>
+                </div>
+
+                <!-- Weekly Report View --><div class="tab-pane fade" id="report-view">
+                    <!-- Report content will be generated here --></div>
+                
+                <!-- Graphs View --><div class="tab-pane fade" id="graphs-view">
+                    <!-- Graphs content will be generated here --></div>
+            </div>
+        </main>
+        
+        <!-- Footer for the signature --><footer class="footer-signature">
+            Herramienta desarrollada por Victor Fabian Intencipa
+        </footer>
+    </div>
+    
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+
+    <script>
+        const blocksContainer = document.getElementById('blocks-container');
+        const sheetContentContainer = document.getElementById('sheet-content-container');
+        const reportContainer = document.getElementById('report-view');
+        const graphsContainer = document.getElementById('graphs-view');
+        const loadingIndicator = document.getElementById('loading');
+        
+        const fileInfoContainer = document.getElementById('file-info');
+        const fileNameDisplay = document.getElementById('file-name');
+
+        let activeCharts = [];
+        let workbookData = null;
+
+        // Register Chart.js annotation plugin
+        if (window.ChartAnnotation) {
+            Chart.register(window.ChartAnnotation);
+        }
+
+
+
+        document.getElementById('report-tab').addEventListener('click', () => {
+            if (workbookData) {
+                generateWeeklyReport();
+            } else {
+                reportContainer.innerHTML = `<div class="alert alert-info">Por favor, carga un archivo de Excel para generar el reporte.</div>`;
+            }
+        });
+
+        document.getElementById('graphs-tab').addEventListener('click', () => {
+            if (workbookData) {
+                generateGraphsReport();
+            } else {
+                graphsContainer.innerHTML = `<div class="alert alert-info">Por favor, carga un archivo de Excel para generar los gráficos.</div>`;
+            }
+        });
+
+        reportContainer.addEventListener('click', function(event) {
+            if (event.target && event.target.id === 'send-report-btn') {
+                sendReportByEmail();
+            }
+        });
+
+        const mesesDisponibles = [
+            { nombre: 'Enero', archivo: 'datos 1 enero.xlsx' },
+            { nombre: 'Febrero', archivo: 'datos 2 febrero.xlsx' },
+            { nombre: 'Marzo', archivo: 'datos 3 marzo.xlsx' },
+            { nombre: 'Abril', archivo: 'datos 4 abril.xlsx' },
+            { nombre: 'Mayo', archivo: 'datos 5 mayo.xlsx' },
+            { nombre: 'Junio', archivo: 'datos 6 junio.xlsx' },
+            { nombre: 'Julio', archivo: 'datos 7 julio.xlsx' },
+            { nombre: 'Agosto', archivo: 'datos 8 agosto.xlsx' },
+            { nombre: 'Septiembre', archivo: 'datos 9 septiembre.xlsx' },
+            { nombre: 'Octubre', archivo: 'datos 10 octubre.xlsx' },
+            { nombre: 'Noviembre', archivo: 'datos 11 noviembre.xlsx' },
+            { nombre: 'Diciembre', archivo: 'datos 12 diciembre.xlsx' }
+        ];
+
+        const monthSelect = document.getElementById('month-select');
+        const loadMonthBtn = document.getElementById('load-month-btn');
+
+        const currentMonthIndex = new Date().getMonth();
+        mesesDisponibles.forEach((mes, index) => {
+            const option = document.createElement('option');
+            option.value = mes.archivo;
+            option.textContent = mes.nombre;
+            if (index === currentMonthIndex) {
+                option.selected = true;
+            }
+            monthSelect.appendChild(option);
+        });
+
+        async function loadSelectedMonth() {
+            const filename = monthSelect.value;
+            const monthName = monthSelect.options[monthSelect.selectedIndex].text;
+            loadingIndicator.classList.remove('d-none');
+            
+            try {
+                const response = await fetch('./' + encodeURI(filename));
+                if (!response.ok) {
+                    throw new Error('Archivo no encontrado');
+                }
+                const arrayBuffer = await response.arrayBuffer();
+                processAndDisplayWorkbook(arrayBuffer, monthName);
+                return true;
+            } catch (e) {
+                console.log(`Carga automática omitida. No se encontró '${filename}' o hubo un error de red.`);
+                return false;
+            } finally {
+                loadingIndicator.classList.add('d-none');
+            }
+        }
+
+        loadMonthBtn.addEventListener('click', () => {
+            clearFile(); // Limpiar antes de cargar nuevo mes
+            loadSelectedMonth().then(success => {
+                if (!success) {
+                    sheetContentContainer.innerHTML = `<div class="alert alert-warning mt-3">El archivo <strong>${monthSelect.value}</strong> aún no se encuentra en el servidor. Verifica que lo hayas subido correctamente o usa el panel de carga.</div>`;
+                }
+            });
+        });
+
+        window.addEventListener('DOMContentLoaded', async () => {
+            // Intento automático de carga del mes actual alojado en la misma ruta
+            await loadSelectedMonth();
+        });
+
+        function clearFile() {
+            blocksContainer.innerHTML = '';
+            sheetContentContainer.innerHTML = '';
+            reportContainer.innerHTML = '';
+            graphsContainer.innerHTML = '';
+            fileInfoContainer.classList.add('d-none');
+            activeCharts.forEach(chart => chart.destroy());
+            activeCharts = [];
+            workbookData = null;
+            // Reset to the first tab
+            const valvesTab = new bootstrap.Tab(document.getElementById('valves-tab'));
+            valvesTab.show();
+        }
+        
+        const parseNumericValue = (value) => {
+            if (value === null || value === undefined || value === '') return NaN;
+            if (typeof value === 'number') return value;
+            let cleanString = String(value).replace(/%/g, '').trim();
+            if (cleanString.includes(',')) {
+                cleanString = cleanString.replace(/\./g, '').replace(',', '.');
+            }
+            if (isFinite(cleanString) && cleanString !== '') {
+                return parseFloat(cleanString);
+            }
+            return NaN;
+        };
+
+        function getBlockForValve(valveNumber) {
+            // if (valveNumber >= 69 && valveNumber <= 94) return 'Bloque 1'; // No longer a range
+            /* switch (valveNumber) {
+                case 69: case 94:
+                    return 'Bloque 1';
+                case 83: case 15: case 84: case 91:
+                    return 'Bloque 2';
+                case 43: case 24: case 42:
+                    return 'Bloque 3';
+                case 57: case 58:
+                    return 'Bloque 4';
+                case 67: case 64:
+                    return 'Bloque 5A';
+                case 70: case 68:
+                    return 'Bloque 5B';
+                case 60: case 59:
+                    return 'Bloque 6';
+                case 47: case 46:
+                    return 'Bloque 7A';
+                case 45: case 44:
+                    return 'Bloque 7B';
+                case 49: case 48:
+                    return 'Bloque 8';
+                case 51: case 50:
+                    return 'Bloque 9';
+                case 53: case 52:
+                    return 'Bloque 10';
+                case 55: case 54:
+                    return 'Bloque 11';
+                case 71: case 72:
+                    return 'Bloque 12';
+                case 9: case 8: case 7: case 6:
+                    return 'Bloque 14';
+                case 5: case 4: case 3: case 2: case 1:
+                    return 'Bloque 16';
+                case 62: case 61:
+                    return 'Bloque 17';
+                case 22: case 21: case 20:
+                    return 'Bloque 18';
+                case 25: case 23:
+                    return 'Bloque 19';
+                case 11: case 12: case 10:
+                    return 'Bloque 20';
+                case 14: case 13:
+                    return 'Bloque 21';
+                case 19: case 17:
+                    return 'Bloque 22';
+                case 18: case 85: case 86:
+                    return 'Bloque 23';
+                case 74: case 73:
+                    return 'Bloque 24';
+                case 87: case 88:
+                    return 'Bloque 25';
+                case 90: case 89:
+                    return 'Bloque 26';
+                case 76: case 75:
+                    return 'Bloque 27';
+                case 79: case 78: case 77:
+                    return 'Bloque 28';
+                case 82: case 81: case 80:
+                    return 'Bloque 29';
+                case 28: case 16: case 27:
+                    return 'Bloque 30';
+                case 26: case 30: case 29:
+                    return 'Bloque 31';
+                case 31: case 32:
+                    return 'Bloque 32';
+                case 34: case 33:
+                    return 'Bloque 33';
+                case 35: case 36:
+                    return 'Bloque 34';
+                case 38: case 37:
+                    return 'Bloque 35';
+                case 40: case 39:
+                    return 'Bloque 36';
+                case 41:
+                    return 'Bloque 37';
+                default:
+                    return 'Otros';
+            } */
+            
+            // Reverting to the configuration from the image
+            if (valveNumber >= 36 && valveNumber <= 48) return 'Bloque 1';
+            if (valveNumber >= 24 && valveNumber <= 32) return 'Bloque 2';
+            if (valveNumber >= 15 && valveNumber <= 23) return 'Bloque 3';
+            if (valveNumber >= 1 && valveNumber <= 13) return 'Bloque 4';
+            if (valveNumber >= 58 && valveNumber <= 65) return 'Bloque 5';
+            if (valveNumber >= 49 && valveNumber <= 57) return 'Bloque 6';
+            return 'Otros'; // Fallback for any other valve
+        }
+
+        function processAndDisplayWorkbook(arrayBuffer, filename) {
+            fileNameDisplay.textContent = filename;
+            fileInfoContainer.classList.remove('d-none');
+            
+            try {
+                const data = new Uint8Array(arrayBuffer);
+                workbookData = XLSX.read(data, { type: 'array' });
+                
+                const sheetNames = workbookData.SheetNames.slice(2);
+                const valvesByBlock = {};
+
+                sheetNames.forEach((sheetName) => {
+                    const match = sheetName.match(/\((\d+)\)/);
+                    if (match && match[1]) {
+                        const valveNumber = parseInt(match[1], 10);
+                        const blockName = getBlockForValve(valveNumber);
+                        
+                        if (!valvesByBlock[blockName]) {
+                            valvesByBlock[blockName] = [];
+                        }
+                        valvesByBlock[blockName].push({ sheetName, valveNumber });
+                    }
+                });
+
+                const sortedBlocks = Object.keys(valvesByBlock).sort((a, b) => {
+                    // Custom sort to handle block names like "Bloque 1", "Bloque 5A", "Bloque 10"
+                    const regex = /Bloque (\d+)([A-Z])?/;
+                    const matchA = a.match(regex);
+                    const matchB = b.match(regex);
+
+                    if (a === 'Otros') return 1;
+                    if (b === 'Otros') return -1;
+
+                    if (matchA && matchB) {
+                        const numA = parseInt(matchA[1], 10);
+                        const numB = parseInt(matchB[1], 10);
+                        
+                        if (numA !== numB) {
+                            return numA - numB;
+                        }
+                        
+                        const letterA = matchA[2] || '';
+                        const letterB = matchB[2] || '';
+                        return letterA.localeCompare(letterB);
+                    }
+                    return a.localeCompare(b);
+                });
+
+                sortedBlocks.forEach(blockName => {
+                    const blockCard = document.createElement('div');
+                    blockCard.className = 'card block-card shadow-sm';
+                    const cardHeader = document.createElement('div');
+                    cardHeader.className = 'card-header fw-bold bg-primary text-white';
+                    cardHeader.textContent = blockName;
+                    blockCard.appendChild(cardHeader);
+                    const cardBody = document.createElement('div');
+                    cardBody.className = 'card-body d-flex flex-wrap gap-2';
+                    valvesByBlock[blockName].sort((a, b) => a.valveNumber - b.valveNumber);
+                    valvesByBlock[blockName].forEach(({ sheetName, valveNumber }) => {
+                        const button = document.createElement('button');
+                        button.textContent = `Válvula ${valveNumber}`;
+                        button.className = 'btn btn-outline-secondary';
+                        button.dataset.sheetName = sheetName;
+                        button.addEventListener('click', () => {
+                            document.querySelectorAll('#blocks-container .btn').forEach(btn => {
+                                btn.classList.remove('btn-primary', 'active');
+                                btn.classList.add('btn-outline-secondary');
+                            });
+                            button.classList.add('btn-primary', 'active');
+                            button.classList.remove('btn-outline-secondary');
+                            displaySheetContent(sheetName);
+                        });
+                        cardBody.appendChild(button);
+                    });
+                    blockCard.appendChild(cardBody);
+                    blocksContainer.appendChild(blockCard);
+                });
+
+                if (blocksContainer.querySelector('.btn')) {
+                    blocksContainer.querySelector('.btn').click();
+                }
+
+            } catch (error) {
+                console.error("Error processing Excel file:", error);
+                sheetContentContainer.innerHTML = `<div class="alert alert-danger">Error: No se pudo leer el archivo. Asegúrate de que es un archivo de Excel válido.</div>`;
+                clearFile();
+            }
+        }
+
+        function displaySheetContent(sheetName) {
+            sheetContentContainer.innerHTML = '';
+            activeCharts.forEach(chart => chart.destroy());
+            activeCharts = [];
+
+            const sheetContainer = document.createElement('div');
+            sheetContainer.className = 'card shadow';
+            const worksheet = workbookData.Sheets[sheetName];
+            const json_data = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: false });
+
+            if (json_data.length > 0) {
+                createTable(sheetContainer, json_data);
+                createCharts(sheetContainer, json_data);
+            } else {
+                sheetContainer.innerHTML = `<p class="text-center text-muted m-3">Esta hoja está vacía.</p>`;
+            }
+            sheetContentContainer.appendChild(sheetContainer);
+        }
+
+        function createTable(container, data) {
+            const table = document.createElement('table');
+            table.className = 'table table-bordered table-striped table-hover table-sm mb-0';
+            table.style.fontSize = '44%';
+            const thead = document.createElement('thead');
+            thead.className = 'table-light';
+            const headerRowEl = document.createElement('tr');
+            if (data.length > 0 && data[0]) {
+                data[0].forEach(headerText => {
+                    const th = document.createElement('th');
+                    th.scope = 'col';
+                    th.textContent = headerText;
+                    headerRowEl.appendChild(th);
+                });
+            }
+            thead.appendChild(headerRowEl);
+            table.appendChild(thead);
+            const tbody = document.createElement('tbody');
+            
+            data.slice(1).forEach((rowData, rowIndex) => {
+                const originalRowIndex = rowIndex + 1; 
+                if (!rowData || rowData.length === 0) return;
+                const tr = document.createElement('tr');
+                rowData.forEach((cellData, cellIndex) => {
+                    const td = document.createElement('td');
+                    td.textContent = cellData;
+                    if (cellIndex > 0) {
+                        let currentValue = null;
+                        let targetValue = null;
+                        let applyAlert = false;
+                        if (originalRowIndex === 6) {
+                            currentValue = parseNumericValue(cellData);
+                            targetValue = parseNumericValue(data[5] ? data[5][cellIndex] : null); 
+                            applyAlert = true;
+                        } else if (originalRowIndex === 8) {
+                            currentValue = parseNumericValue(cellData);
+                            targetValue = parseNumericValue(data[7] ? data[7][cellIndex] : null); 
+                            applyAlert = true;
+                        } else if (originalRowIndex === 14) {
+                            currentValue = parseNumericValue(cellData);
+                            if (isNaN(currentValue)) currentValue = 0;
+                            targetValue = 100;
+                            applyAlert = true;
+                        }
+                        
+                        if (originalRowIndex === 5 || originalRowIndex === 7) applyAlert = false; 
+
+                        if (applyAlert && !isNaN(currentValue) && !isNaN(targetValue) && targetValue !== 0) {
+                            if (currentValue !== 0) { 
+                                const diff = Math.abs(currentValue - targetValue);
+                                const percentageDiff = diff / targetValue;
+                                if (percentageDiff <= 0.10) td.style.backgroundColor = 'rgba(144, 238, 144, 0.6)';
+                                else if (percentageDiff <= 0.20) td.style.backgroundColor = 'rgba(255, 255, 0, 0.6)';
+                                else td.style.backgroundColor = 'rgba(255, 99, 71, 0.6)';
+                            }
+                        }
+                    }
+                    tr.appendChild(td);
+                });
+
+                if (originalRowIndex === 1) tr.style.color = 'blue';
+
+                const cells = tr.getElementsByTagName('td');
+                for (let i = 0; i < cells.length; i++) {
+                    if (i === 0) {
+                        cells[i].style.fontWeight = 'bold';
+                        cells[i].style.whiteSpace = 'nowrap';
+                    }
+                    if (typeof cells[i].textContent === 'string' && cells[i].textContent.toLowerCase().includes('valvula')) {
+                        cells[i].style.color = 'blue';
+                        if (cells[i + 1]) cells[i + 1].style.color = 'blue';
+                    }
+                }
+                tbody.appendChild(tr);
+            });
+            table.appendChild(tbody);
+            container.appendChild(table);
+        }
+
+        function createCharts(container, data) {
+            const chartsGrid = document.createElement('div');
+            chartsGrid.className = 'row g-4 mt-3 p-4';
+            container.appendChild(chartsGrid);
+            
+            const cleanValue = (value, isPercentage = false) => {
+                const num = parseNumericValue(value);
+                if (isNaN(num)) return null;
+                if (isPercentage && Math.abs(num) <= 1 && value !== '0' && value !== 0) return num * 100;
+                return num;
+            };
+            
+            const createSingleChart = (config) => {
+                if (data.length <= config.maxRow) return;
+                const headerRow = data[config.headerRowIndex];
+                const dataRows = config.dataRowIndices.map(i => data[i]);
+                if (!headerRow || dataRows.some(r => !r)) return;
+
+                const chartLabels = [];
+                const datasetsData = dataRows.map(() => []);
+                for (let i = 1; i < headerRow.length; i++) {
+                    const label = headerRow[i];
+                    if (label === null || label === undefined || String(label).trim() === '') continue;
+                    chartLabels.push(String(label));
+                    dataRows.forEach((row, j) => datasetsData[j].push(cleanValue(row[i], config.isPercentage)));
+                }
+                
+                const datasets = dataRows.map((row, i) => ({
+                    label: row[0] ? row[0].trim() : `Serie ${i+1}`,
+                    data: datasetsData[i],
+                    fill: false,
+                    borderColor: config.colors[i % config.colors.length],
+                    tension: 0.1,
+                    spanGaps: true
+                }));
+
+                const chartWrapper = document.createElement('div');
+                chartWrapper.className = 'col-12 col-md-6';
+                const card = document.createElement('div');
+                card.className = 'card shadow-sm p-3 h-100';
+                const canvas = document.createElement('canvas');
+                card.appendChild(canvas);
+                chartWrapper.appendChild(card);
+                chartsGrid.appendChild(chartWrapper);
+
+                const yAxisConfig = { ticks: {} };
+                if (config.isPercentage) yAxisConfig.ticks.callback = value => value.toFixed(0) + '%';
+                if (config.yMin !== undefined) yAxisConfig.min = config.yMin;
+                if (config.yMax !== undefined) yAxisConfig.max = config.yMax;
+                if (config.yStep !== undefined) yAxisConfig.ticks.stepSize = config.yStep;
+
+                const newChart = new Chart(canvas.getContext('2d'), {
+                    type: 'line',
+                    data: { labels: chartLabels, datasets: datasets },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: { y: yAxisConfig, x: { type: 'category', ticks: { maxRotation: 90, minRotation: 70 }, grid: { display: false } } },
+                        plugins: { legend: { display: true, position: 'bottom' }, title: { display: true, text: config.title, font: { size: 16 } } }
+                    }
+                });
+                activeCharts.push(newChart);
+            };
+
+            const chartConfigs = [
+                { title: 'Conductividad Electrica', headerRowIndex: 4, dataRowIndices: [5, 6], maxRow: 6, colors: ['#00599D', '#ED7D31'], yMin: 0, yMax: 3, yStep: 0.2, isPercentage: false },
+                { title: 'pH', headerRowIndex: 4, dataRowIndices: [7, 8], maxRow: 8, colors: ['#00B050', '#FFC000'], isPercentage: false },
+                { title: '% Ejecución', headerRowIndex: 4, dataRowIndices: [14], maxRow: 14, colors: ['#7030A0'], isPercentage: true },
+                { title: 'N-NO3', headerRowIndex: 4, dataRowIndices: [15], maxRow: 15, colors: ['#5A9BD5'], isPercentage: false }
+            ];
+            chartConfigs.forEach(createSingleChart);
+            if (chartsGrid.children.length === 0) {
+                chartsGrid.innerHTML = `<p class="text-center text-muted col-12 m-3">No se pudieron generar gráficos. Verifique el formato de los datos.</p>`
+            }
+        }
+
+        function getValuesForFirstAlertSequence(dataRow, targetRow, targetValue = null) {
+            if (!dataRow) return null;
+            let consecutive = 0;
+            let valuesInSequence = [];
+            
+            // START FROM THE LAST 6 DATA POINTS
+            const startIndex = Math.max(1, dataRow.length - 6); // Start from (length - 6) or 1 (if less than 6 points)
+
+            for (let i = startIndex; i < dataRow.length; i++) {
+                const current = parseNumericValue(dataRow[i]);
+                const target = targetValue !== null ? targetValue : parseNumericValue(targetRow ? targetRow[i] : null);
+                if (!isNaN(current) && !isNaN(target) && target !== 0 && current !== 0) {
+                    const diff = Math.abs(current - target) / target;
+                    if (diff > 0.20) {
+                        consecutive++;
+                        const valueToStore = (current / target) * 100;
+                        valuesInSequence.push(valueToStore);
+                    } else {
+                        if (consecutive >= 3) {
+                            return valuesInSequence;
+                        }
+                        consecutive = 0;
+                        valuesInSequence = [];
+                    }
+                } else {
+                    if (consecutive >= 3) {
+                        return valuesInSequence;
+                    }
+                    consecutive = 0;
+                    valuesInSequence = [];
+                }
+            }
+            if (consecutive >= 3) {
+                return valuesInSequence;
+            }
+            return null;
+        }
+
+        function generateWeeklyReport() {
+            reportContainer.innerHTML = ''; // Clear previous report
+            const sheetNames = workbookData.SheetNames.slice(2);
+
+            let totalSum = 0;
+            let totalCount = 0;
+            const blockData = {};
+            const redAlerts = { ce: [], ph: [], ejecucion: [] };
+
+            sheetNames.forEach(sheetName => {
+                const worksheet = workbookData.Sheets[sheetName];
+                const json_data = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: false });
+
+                const match = sheetName.match(/\((\d+)\)/);
+                const valveNumber = (match && match[1]) ? parseInt(match[1], 10) : null;
+                if (!valveNumber) return;
+
+                const blockName = getBlockForValve(valveNumber);
+                if (!blockData[blockName]) {
+                    blockData[blockName] = { sum: 0, count: 0 };
+                }
+
+                if (json_data.length > 14) {
+                    const executionRow = json_data[14];
+                    // SLICE THE LAST 6 DATA POINTS
+                    const dataPoints = executionRow.slice(1); // Get all data points (excluding row header)
+                    const last6DataPoints = dataPoints.slice(-6); // Get the last 6
+
+                    last6DataPoints.forEach(val => { // Iterate over the last 6
+                        const numVal = parseNumericValue(val);
+                        if (!isNaN(numVal) && numVal > 0) { // Keep ignoring zeros
+                            totalSum += numVal;
+                            totalCount++;
+                            blockData[blockName].sum += numVal;
+                            blockData[blockName].count++;
+                        }
+                    });
+                }
+                
+                const ceValues = getValuesForFirstAlertSequence(json_data.length > 6 ? json_data[6] : null, json_data.length > 5 ? json_data[5] : null);
+                if (ceValues !== null) {
+                    if (!redAlerts.ce.some(alert => alert.valveNumber === valveNumber)) {
+                        redAlerts.ce.push({ valveNumber, values: ceValues });
+                    }
+                }
+
+                const phValues = getValuesForFirstAlertSequence(json_data.length > 8 ? json_data[8] : null, json_data.length > 7 ? json_data[7] : null);
+                if (phValues !== null) {
+                    if (!redAlerts.ph.some(alert => alert.valveNumber === valveNumber)) {
+                        redAlerts.ph.push({ valveNumber, values: phValues });
+                    }
+                }
+
+                const ejecucionValues = getValuesForFirstAlertSequence(json_data.length > 14 ? json_data[14] : null, null, 100);
+                if (ejecucionValues !== null) {
+                    if (!redAlerts.ejecucion.some(alert => alert.valveNumber === valveNumber)) {
+                        redAlerts.ejecucion.push({ valveNumber, values: ejecucionValues });
+                    }
+                }
+            });
+            
+            let reportHTML = `<div id="report-content-display"><div class="row">`;
+            
+            reportHTML += `<div class="col-md-6 mb-4">
+                            <div class="card h-100">
+                                <div class="card-header bg-success text-white">Promedios de Riego (% Ejecución)</div>
+                                <div class="card-body">
+                                    <h5 class="card-title">Promedio General</h5>
+                                    <p class="card-text fs-3 fw-bold">${(totalCount > 0 ? (totalSum / totalCount) : 0).toFixed(2)}%</p>
+                                    <hr>
+                                    <h6 class="card-subtitle mb-2 text-muted">Promedio por Bloque</h6>
+                                    <ul class="list-group list-group-flush">`;
+            
+            const sortedBlockData = Object.keys(blockData).sort((a, b) => {
+                const regex = /Bloque (\d+)([A-Z])?/;
+                const matchA = a.match(regex);
+                const matchB = b.match(regex);
+
+                if (a === 'Otros') return 1;
+                if (b === 'Otros') return -1;
+
+                if (matchA && matchB) {
+                    const numA = parseInt(matchA[1], 10);
+                    const numB = parseInt(matchB[1], 10);
+                    
+                    if (numA !== numB) {
+                        return numA - numB;
+                    }
+                    
+                    const letterA = matchA[2] || '';
+                    const letterB = matchB[2] || '';
+                    return letterA.localeCompare(letterB);
+                }
+                return a.localeCompare(b);
+            });
+            
+            sortedBlockData.forEach(blockName => {
+                const avg = blockData[blockName].count > 0 ? (blockData[blockName].sum / blockData[blockName].count) : 0;
+                reportHTML += `<li class="list-group-item d-flex justify-content-between align-items-center">
+                                ${blockName} <span class="badge bg-primary rounded-pill">${avg.toFixed(2)}%</span>
+                               </li>`;
+            });
+            reportHTML += `</ul></div></div></div>`;
+
+            const renderAlertList = (valvesInfo) => {
+                if (valvesInfo.length === 0) return '<p class="card-text">Ninguna</p>';
+                const valveSpans = valvesInfo.sort((a, b) => a.valveNumber - b.valveNumber)
+                    .map(info => {
+                        const valueString = info.values.map(e => `${e.toFixed(1)}%`).join(', ');
+                        return `<span class="badge bg-secondary m-1">Válvula ${info.valveNumber} (${valueString})</span>`;
+                    })
+                    .join('');
+                return `<div class="d-flex flex-wrap">${valveSpans}</div>`;
+            };
+
+            reportHTML += `<div class="col-md-6 mb-4">
+                            <div class="card h-100">
+                                <div class="card-header bg-danger text-white">Alertas Críticas (3+ días en rojo)</div>
+                                <div class="card-body">
+                                    <h6 class="card-subtitle mb-2 text-muted">Conductividad Eléctrica</h6>
+                                    ${renderAlertList(redAlerts.ce)}
+                                    <hr>
+                                    <h6 class="card-subtitle mb-2 text-muted">pH</h6>
+                                    ${renderAlertList(redAlerts.ph)}
+                                    <hr>
+                                    <h6 class="card-subtitle mb-2 text-muted">% Ejecución</h6>
+                                    ${renderAlertList(redAlerts.ejecucion)}
+                                </div>
+                            </div>
+                           </div>`;
+
+            reportHTML += `</div></div>`;
+            
+            reportHTML += `<div class="card mt-4">
+                            <div class="card-header bg-info text-white">
+                                Enviar Reporte por Correo
+                            </div>
+                            <div class="card-body">
+                                <div id="email-alert-placeholder"></div>
+                                <p class="card-text text-muted small">Esta función preparará un borrador en tu cliente de correo electrónico (Outlook, Gmail, etc.) con el reporte semanal. Debido a limitaciones de seguridad del navegador, <strong>deberás presionar "Enviar" manualmente.</strong></p>
+                                <div class="mb-3">
+                                    <label for="email-recipients" class="form-label"><strong>Destinatarios</strong> (separados por coma):</label>
+                                    <input type="text" class="form-control" id="email-recipients" placeholder="ejemplo1@correo.com, ejemplo2@correo.com">
+                                </div>
+                                <button id="send-report-btn" class="btn btn-primary">Preparar Correo</button>
+                            </div>
+                       </div>`;
+
+            reportContainer.innerHTML = reportHTML;
+        }
+        
+        function getWeekNumber(d) {
+            d = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+            d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
+            var yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+            var weekNo = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+            return weekNo;
+        }
+
+        function sendReportByEmail() { 
+            const recipients = document.getElementById('email-recipients').value.trim();
+            const alertPlaceholder = document.getElementById('email-alert-placeholder');
+            alertPlaceholder.innerHTML = '';
+
+            if (!recipients) {
+                const alertDiv = document.createElement('div');
+                alertDiv.className = 'alert alert-warning';
+                alertDiv.textContent = 'Por favor, ingresa al menos un correo electrónico.';
+                alertPlaceholder.appendChild(alertDiv);
+                return;
+            }
+
+            const reportContentEl = document.getElementById('report-content-display');
+            if (!reportContentEl) return;
+
+            let reportText = 'Reporte Semanal - Camas Piloto\n';
+            reportText += '====================================\n\n';
+            
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(reportContentEl.innerHTML, 'text/html');
+            
+            const averagesCard = doc.querySelector('.card-header.bg-success')?.parentElement;
+            if(averagesCard) {
+                reportText += `PROMEDIOS DE RIEGO (% EJECUCIÓN)\n`;
+                reportText += '------------------------------------\n';
+                const generalAvg = averagesCard.querySelector('p.fs-3')?.textContent.trim() || 'N/A';
+                reportText += `Promedio General: ${generalAvg}\n\n`;
+                reportText += `Promedio por Bloque:\n`;
+                averagesCard.querySelectorAll('li').forEach(li => {
+                    const blockName = li.childNodes[0].nodeValue.trim();
+                    const avg = li.querySelector('span')?.textContent.trim() || 'N/A';
+                    reportText += `- ${blockName}: ${avg}\n`;
+                });
+                reportText += '\n';
+            }
+
+            const alertsCard = doc.querySelector('.card-header.bg-danger')?.parentElement;
+            if(alertsCard) {
+                reportText += `ALERTAS CRÍTICAS (3+ DÍAS EN ROJO)\n`;
+                reportText += '------------------------------------\n';
+                const sections = alertsCard.querySelectorAll('.card-body > h6');
+                sections.forEach(h6 => {
+                    reportText += `${h6.textContent.trim()}:\n`;
+                    const pOrDiv = h6.nextElementSibling;
+                    const valves = Array.from(pOrDiv.querySelectorAll('span')).map(span => span.textContent.trim());
+                    reportText += (valves.length > 0 ? valves.join(', ') : 'Ninguna') + '\n\n';
+                });
+            }
+
+            const currentWeek = getWeekNumber(new Date());
+            const subject = `Reporte Semanal - Camas Piloto Semana ${currentWeek}`;
+            const encodedSubject = encodeURIComponent(subject);
+            const encodedBody = encodeURIComponent(reportText);
+            
+            const mailtoLinkBase = `mailto:${recipients}?subject=${encodedSubject}`;
+            const mailtoLinkWithBody = `${mailtoLinkBase}&body=${encodedBody}`;
+
+            // Check length. 1500 is a safe limit for the body part.
+            if (encodedBody.length > 1500) {
+                // Report is too long. Show manual copy fallback.
+                
+                // Create alert
+                const alertDiv = document.createElement('div');
+                alertDiv.className = 'alert alert-warning';
+                
+                // Create instructional text
+                const alertText = document.createElement('p');
+                alertText.innerHTML = '<strong>¡El reporte es muy largo!</strong><br>Cópialo manualmente del siguiente recuadro y pégalo en el correo que se abrirá.';
+                alertDiv.appendChild(alertText);
+
+                // Create text area with the report
+                const reportTextArea = document.createElement('textarea');
+                reportTextArea.className = 'form-control mt-2';
+                reportTextArea.value = reportText; // The raw report text
+                reportTextArea.readOnly = true;
+                reportTextArea.rows = 5;
+                alertDiv.appendChild(reportTextArea);
+                
+                alertPlaceholder.appendChild(alertDiv);
+                
+                // Open email client without the body
+                window.location.href = mailtoLinkBase;
+
+            } else {
+                // Report is short enough, use the full mailto link
+                window.location.href = mailtoLinkWithBody;
+            }
+        }
+
+        function generateGraphsReport() {
+            graphsContainer.innerHTML = '';
+            const sheetNames = workbookData.SheetNames.slice(2);
+            
+            const allValveData = {};
+            let totalCE = { sum: 0, count: 0 };
+            let totalPH = { sum: 0, count: 0 };
+            let totalEjecucion = { sum: 0, count: 0 };
+            let totalNNO3 = { sum: 0, count: 0 };
+
+            const calculateAvgPct = (dataRow, targetRow, targetValue = null, ignoreZeros = false) => {
+                if (!dataRow) return NaN;
+                
+                const last6Data = dataRow.slice(Math.max(1, dataRow.length - 6));
+                let sum = 0;
+                let count = 0;
+                
+                for (let i = 0; i < last6Data.length; i++) {
+                    const current = parseNumericValue(last6Data[i]);
+                    if (ignoreZeros && current === 0) continue;
+
+                    const target = targetValue !== null 
+                        ? targetValue 
+                        : parseNumericValue(targetRow ? targetRow[i + Math.max(1, dataRow.length - 6)] : null);
+                    
+                    if (!isNaN(current) && !isNaN(target) && target !== 0) {
+                        sum += (current / target) * 100;
+                        count++;
+                    }
+                }
+                return count > 0 ? (sum / count) : NaN;
+            };
+
+            const calculateAvgRaw = (dataRow, ignoreZeros = false) => {
+                if (!dataRow) return NaN;
+                
+                const last6Data = dataRow.slice(Math.max(1, dataRow.length - 6));
+                let sum = 0;
+                let count = 0;
+                
+                for (let i = 0; i < last6Data.length; i++) {
+                    const current = parseNumericValue(last6Data[i]);
+                    if (ignoreZeros && current === 0) continue;
+                    if (!isNaN(current)) {
+                        sum += current;
+                        count++;
+                    }
+                }
+                return count > 0 ? (sum / count) : NaN;
+            };
+
+            sheetNames.forEach(sheetName => {
+                const worksheet = workbookData.Sheets[sheetName];
+                const json_data = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: false });
+                
+                const match = sheetName.match(/\((\d+)\)/);
+                const valveNumber = (match && match[1]) ? parseInt(match[1], 10) : null;
+                if (!valveNumber) return;
+
+                const avgCE = calculateAvgPct(json_data.length > 6 ? json_data[6] : null, json_data.length > 5 ? json_data[5] : null);
+                const avgPH = calculateAvgPct(json_data.length > 8 ? json_data[8] : null, json_data.length > 7 ? json_data[7] : null);
+                const avgEjecucion = calculateAvgPct(json_data.length > 14 ? json_data[14] : null, null, 100, true);
+                const avgNNO3 = calculateAvgRaw(json_data.length > 15 ? json_data[15] : null, true);
+
+                allValveData[valveNumber] = { ce: avgCE, ph: avgPH, ejecucion: avgEjecucion, nno3: avgNNO3 };
+
+                if (!isNaN(avgCE)) { totalCE.sum += avgCE; totalCE.count++; }
+                if (!isNaN(avgPH)) { totalPH.sum += avgPH; totalPH.count++; }
+                if (!isNaN(avgEjecucion)) { totalEjecucion.sum += avgEjecucion; totalEjecucion.count++; }
+                if (!isNaN(avgNNO3)) { totalNNO3.sum += avgNNO3; totalNNO3.count++; }
+            });
+
+            // Render Graphs HTML
+            let graphsHTML = `<div class="row">`;
+            
+            // Summary Cards
+            graphsHTML += `
+                <div class="col-md-3 mb-3">
+                    <div class="card h-100">
+                        <div class="card-header">% Ejecución Promedio (Total)</div>
+                        <div class="card-body text-center">
+                            <h2 class="fw-bold">${(totalEjecucion.count > 0 ? totalEjecucion.sum / totalEjecucion.count : 0).toFixed(1)}%</h2>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3 mb-3">
+                    <div class="card h-100">
+                        <div class="card-header">Cumplimiento CE Promedio (Total)</div>
+                        <div class="card-body text-center">
+                            <h2 class="fw-bold">${(totalCE.count > 0 ? totalCE.sum / totalCE.count : 0).toFixed(1)}%</h2>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3 mb-3">
+                    <div class="card h-100">
+                        <div class="card-header">Cumplimiento pH Promedio (Total)</div>
+                        <div class="card-body text-center">
+                            <h2 class="fw-bold">${(totalPH.count > 0 ? totalPH.sum / totalPH.count : 0).toFixed(1)}%</h2>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3 mb-3">
+                    <div class="card h-100">
+                        <div class="card-header">N-NO3 Promedio (Total)</div>
+                        <div class="card-body text-center">
+                            <h2 class="fw-bold">${(totalNNO3.count > 0 ? totalNNO3.sum / totalNNO3.count : 0).toFixed(1)}</h2>
+                        </div>
+                    </div>
+                </div>
+            `;
+            graphsHTML += `</div><div class="row">`;
+
+            // Chart Canvases
+            graphsHTML += `
+                <div class="col-lg-12 mb-4"><div class="card shadow-sm"><div class="card-body"><div class="chart-container"><canvas id="ejecucionBarChart"></canvas></div></div></div></div>
+                <div class="col-lg-12 mb-4"><div class="card shadow-sm"><div class="card-body"><div class="chart-container"><canvas id="ceBarChart"></canvas></div></div></div></div>
+                <div class="col-lg-12 mb-4"><div class="card shadow-sm"><div class="card-body"><div class="chart-container"><canvas id="phBarChart"></canvas></div></div></div></div>
+                <div class="col-lg-12 mb-4"><div class="card shadow-sm"><div class="card-body"><div class="chart-container"><canvas id="nno3BarChart"></canvas></div></div></div></div>
+            `;
+            graphsHTML += `</div>`;
+            graphsContainer.innerHTML = graphsHTML;
+
+            // Prepare data for charts
+            const sortedValves = Object.keys(allValveData).sort((a, b) => a - b);
+            const labels = sortedValves.map(v => `Válvula ${v}`);
+            
+            const ejecucionData = sortedValves.map(v => allValveData[v].ejecucion);
+            const ceData = sortedValves.map(v => allValveData[v].ce);
+            const phData = sortedValves.map(v => allValveData[v].ph);
+            const nno3Data = sortedValves.map(v => allValveData[v].nno3);
+
+            const getColors = (data) => data.map(v => (!isNaN(v) && v >= 90 && v <= 110) ? 'rgba(75, 192, 192, 0.7)' : 'rgba(255, 99, 132, 0.7)');
+            const getNNO3Colors = (data) => data.map(v => (!isNaN(v) && v >= 150 && v <= 220) ? 'rgba(75, 192, 192, 0.7)' : 'rgba(255, 99, 132, 0.7)');
+            
+            const ejecucionColors = getColors(ejecucionData);
+            const ceColors = getColors(ceData);
+            const phColors = getColors(phData);
+            const nno3Colors = getNNO3Colors(nno3Data);
+
+            const createBarChart = (canvasId, chartLabels, chartData, chartColors, title, yAxisLabel, yMax = 150, line1Value, line2Value) => {
+                const ctx = document.getElementById(canvasId).getContext('2d');
+                new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: chartLabels,
+                        datasets: [{
+                            label: 'Cumplimiento Promedio (%)',
+                            data: chartData,
+                            backgroundColor: chartColors,
+                            borderColor: chartColors.map(c => c.replace('0.7', '1')),
+                            borderWidth: 1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                max: yMax,
+                                title: { display: true, text: yAxisLabel }
+                            },
+                            x: {
+                                ticks: {
+                                    maxRotation: 90,
+                                    minRotation: 70
+                                }
+                            }
+                        },
+                        plugins: {
+                            legend: { display: false },
+                            title: { display: true, text: title, font: { size: 16 } },
+                            annotation: {
+                                annotations: {
+                                    line1: {
+                                        type: 'line',
+                                        yMin: line1Value,
+                                        yMax: line1Value,
+                                        borderColor: 'orange',
+                                        borderWidth: 2,
+                                        borderDash: [6, 6],
+                                        label: {
+                                            content: 'Óptimo',
+                                            display: false,
+                                            position: 'end',
+                                            backgroundColor: 'rgba(255, 165, 0, 0.7)'
+                                        }
+                                    },
+                                    line2: {
+                                        type: 'line',
+                                        yMin: line2Value,
+                                        yMax: line2Value,
+                                        borderColor: 'orange',
+                                        borderWidth: 2,
+                                        borderDash: [6, 6],
+                                        label: {
+                                            content: 'Óptimo',
+                                            display: false,
+                                            position: 'end',
+                                            backgroundColor: 'rgba(255, 165, 0, 0.7)'
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            };
+
+            createBarChart('ejecucionBarChart', labels, ejecucionData, ejecucionColors, 'Cumplimiento % Ejecución (Últimos 6 días)', 'Cumplimiento (%)', 150, 90, 110);
+            createBarChart('ceBarChart', labels, ceData, ceColors, 'Cumplimiento Conductividad Eléctrica (Últimos 6 días)', 'Cumplimiento (%)', 150, 90, 110);
+            createBarChart('phBarChart', labels, phData, phColors, 'Cumplimiento pH (Últimos 6 días)', 'Cumplimiento (%)', 150, 90, 110);
+            createBarChart('nno3BarChart', labels, nno3Data, nno3Colors, 'Valor Promedio N-NO3 (Últimos 6 días)', 'Valor Promedio', 300, 150, 220);
+        }
+
+    </script>
+</body>
+</html>
+
